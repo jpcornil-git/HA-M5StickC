@@ -1,0 +1,267 @@
+substitutions:
+  device_id: "1"
+  devicename: "m5stickc_env_${device_id}"
+  friendly_devicename: "M5StickC ENV ${device_id}"
+
+# - Hardware description -------------------------------------------------------
+
+esp32:
+  board: m5stick-c
+  framework:
+    type: arduino
+
+i2c:
+ - id: bus_a
+   # Internal/system i2c bus
+   sda: GPIO21
+   scl: GPIO22
+ - id: bus_b 
+   # external/second i2c bus
+   sda: GPIO0
+   scl: GPIO26
+
+spi:
+  clk_pin: GPIO13
+  mosi_pin: GPIO15
+
+output:
+  - platform: ledc
+    id: builtin_led
+    pin: 10
+    inverted: true
+
+# - System configuration -------------------------------------------------------
+
+# Password for Over-The-Air (OTA) firmware update
+ota:
+  password: !secret ota_password
+
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+
+# Wifi settings
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# - Global variables -----------------------------------------------------------
+
+globals:
+  - id: menu_id
+    type: int
+    restore_value: no
+    initial_value: "0"
+  - id: offset_temperature
+    type: float
+    restore_value: yes
+    initial_value: "0.0"
+  - id: offset_humidity
+    type: float
+    restore_value: yes
+    initial_value: "0.0"
+
+# Fonts
+font:
+  - file: 'fonts/arial.ttf'
+    id: font1
+    size: 14
+  - file: 'fonts/arial.ttf'
+    id: font2
+    size: 24
+  - file: 'fonts/arial.ttf'
+    id: font3
+    size: 36
+
+# Colors
+color:
+  - id: red
+    red: 100%
+    green: 0%
+    blue: 0%
+  - id: green
+    red: 0%
+    green: 100%
+    blue: 0%
+  - id: blue
+    red: 0%
+    green: 0%
+    blue: 100%
+  - id: gray
+    red: 50%
+    green: 50%
+    blue: 50%
+    
+# - ESPHome component configuration --------------------------------------------
+
+esphome:
+  name: $devicename
+  on_boot:
+    # Splash screen for 3s then display menu 1
+    priority: 800
+    then:
+      - delay: 3s
+      - lambda: |-
+          id(menu_id) = 1;
+      - component.update: tft_display
+
+# - Home assistant components --------------------------------------------------
+
+# Button configuration
+binary_sensor:
+  # Front/main button: Change displayed menu
+  - platform: gpio
+    pin:
+      number: GPIO37
+      inverted: true
+    name: ${friendly_devicename} Button A
+    on_press:
+      then:
+        - lambda: |-
+            id(menu_id) += 1;
+            if (id(menu_id) > 4)
+              id(menu_id) = 1;
+        - component.update: tft_display
+        
+  # Bottom button: Make it available for HA usage
+  - platform: gpio
+    pin:
+      number: GPIO39
+      inverted: true
+    name: ${friendly_devicename} Button B
+
+sensor:
+  # Temperature offset from HA (entity_id have to match)
+  - platform: homeassistant
+    id: ha_offset_temperature
+    entity_id: input_number.${devicename}_offset_temperature
+    on_value:
+      then:
+        # Store new offset into nvram (restore_value=true) only if new value differs
+        - lambda: |-
+            if ( (!isnan(x)) && (x != id(offset_temperature)) ) {
+              ESP_LOGI("{$friendly_devicename}", "Stored new offset value for temperature = %+.1f °C (was %+.1f °C)", x, id(offset_temperature));
+              id(offset_temperature)=x;
+            }
+  # Humidity offset from HA (entity_id have to match)
+  - platform: homeassistant
+    id: ha_offset_humidity
+    entity_id: input_number.${devicename}_offset_humidity
+    on_value:
+      then:
+        # Store new offset into nvram only if new value differs
+        - lambda: |-
+        - lambda: |-
+            if ( (!isnan(x)) && (x != id(offset_humidity)) ) {
+              ESP_LOGI("{$friendly_devicename}", "Stored new offset value for humidity = %+.1f %% (was %+.1f %%)", x, id(offset_humidity));
+              id(offset_humidity)=x;
+            }
+  # Temperature & Humidity sensors from ENV HAT
+  - platform: sht3xd
+    i2c_id: bus_b
+    address: 0x44
+    update_interval: 30s
+    temperature:
+      name: ${friendly_devicename} Room Temperature
+      id: sht3xd_temp
+      filters:
+        - lambda: |-
+            return x+id(offset_temperature);
+    humidity:
+      name: ${friendly_devicename} Room Humidity
+      id: sht3xd_hum
+      filters:
+        - lambda: |-
+            return x+id(offset_humidity);
+
+  # AXP192 power management unit (PMU) - must be present to initialize TFT power on
+  - platform: axp192
+    id: pmu
+    address: 0x34
+    i2c_id: bus_a
+    update_interval: 30s
+
+    # Battery sensor
+    battery_level:
+      name: ${friendly_devicename} Battery Level
+      id: m5stick_batterylevel
+    brightness: 0.5
+
+  # Wifi RSSI sensor
+  - platform: wifi_signal
+    name: ${friendly_devicename} WiFi Signal
+    id: wifi_dbm
+
+  # Uptime sensor
+  - platform: uptime
+    name: ${friendly_devicename} Uptime
+
+# Internal LED available for HA usage
+light:
+  - platform: monochromatic
+    id: led1
+    output:  builtin_led
+    name: ${friendly_devicename} Led
+
+# - Display configuration and management ---------------------------------------
+
+# 135x240 TFT LCD
+display:
+  - platform: st7789v
+    id: tft_display
+    cs_pin: GPIO5
+    dc_pin: GPIO23
+    reset_pin: GPIO18
+    rotation: 270
+    lambda: |-
+      float brightness=0.5;
+      if (id(menu_id) == 0) {
+        // Splash display
+        it.print(0, 20, id(font2), green, TextAlign::TOP_LEFT, "ID = ${friendly_devicename}");
+
+      } else if (id(menu_id) == 1) {
+        // Display off
+        brightness=0.0;
+
+      } else {
+        // Display header
+        it.print(0, 0, id(font1), gray, TextAlign::TOP_LEFT, "ID = ${friendly_devicename}");
+        if ((WiFi.status() == WL_CONNECTED)) {
+          it.printf(0, 20, id(font1), blue, TextAlign::LEFT, "RSSI: %.0f dBm", id(wifi_dbm).state);
+        } else {
+          it.print(0, 20, id(font1), red, TextAlign::LEFT, "No Wifi");
+        }
+        it.printf(120, 20, id(font1), blue, TextAlign::TOP_LEFT, "Battery: %.0f %%", id(m5stick_batterylevel).state);
+
+        if (id(menu_id) == 2) {
+          // Corrected temperature/humidity values
+          it.print(0, 40, id(font3), green, TextAlign::TOP_LEFT, "Temp.");
+          it.printf(100, 40, id(font3), green, TextAlign::TOP_LEFT, ": %.1f °C", id(sht3xd_temp).state);
+          it.print(0, 90, id(font3), green, TextAlign::TOP_LEFT, "Hum.");
+          it.printf(100, 90, id(font3), green, TextAlign::TOP_LEFT, ": %.1f %%", id(sht3xd_hum).state);
+          
+        } else if (id(menu_id) == 3) {
+          // Raw temperature/humidity values
+          it.print(240, 0, id(font1), red, TextAlign::TOP_RIGHT, "RAW");
+          it.print(0, 40, id(font3), green, TextAlign::TOP_LEFT, "Temp.");
+          it.printf(100, 40, id(font3), red, TextAlign::TOP_LEFT, ": %.1f °C", id(sht3xd_temp).raw_state);
+          it.print(0, 90, id(font3), green, TextAlign::TOP_LEFT, "Hum.");
+          it.printf(100, 90, id(font3), red, TextAlign::TOP_LEFT, ": %.1f %%", id(sht3xd_hum).raw_state);
+          
+        } else if (id(menu_id) == 4) {
+          // Network/wifi parameters
+          it.printf(0, 40, id(font1), green, TextAlign::TOP_LEFT, "Hostname: %s", WiFi.getHostname());
+          it.printf(0, 60, id(font1), green, TextAlign::TOP_LEFT, "MAC: %s", WiFi.macAddress().c_str());
+          if ((WiFi.status() == WL_CONNECTED)) {
+            it.printf(0, 80, id(font1), green, TextAlign::TOP_LEFT, "IP: %s", WiFi.localIP().toString().c_str());
+            it.printf(0, 100, id(font1), green, TextAlign::TOP_LEFT, "SSID: %s", WiFi.SSID().c_str());
+          }
+        }
+      }
+      // Update display brightness
+      id(pmu).set_brightness(brightness);
+      id(pmu).update();
+
