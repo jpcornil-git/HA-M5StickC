@@ -70,15 +70,15 @@ A typical application uses this device as a temperature or humidity sensor for t
   input_number:
     m5stickc_env_1_offset_temperature:
       name: Température offset
+      unit_of_measurement: "°C"
       mode: box
-      initial: 0
       min: -5.0
       max: +5.0
       step: 0.1
     m5stickc_env_1_offset_humidity:
       name: Humidity offset
+      unit_of_measurement: "%"
       mode: box
-      initial: 0
       min: -10.0
       max: +10.0
       step: 0.5
