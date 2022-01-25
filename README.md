@@ -95,3 +95,6 @@ A typical application uses this device as a temperature or humidity sensor for t
 
   **Note**: When you update correction data, it will take up to 30s (update cycle) for these to become effective. 
 
+# References
+
+* [1] AXP192 Power Management unit (PMU) is reused from [esphome-m5stickC](https://github.com/airy10/esphome-m5stickC) 
